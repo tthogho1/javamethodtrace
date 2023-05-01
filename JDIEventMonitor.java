@@ -1,38 +1,27 @@
-import com.sun.jdi.VirtualMachine;
-import com.sun.jdi.request.EventRequestManager;
-import com.sun.jdi.request.MethodEntryRequest;
-import com.sun.jdi.request.EventRequest;
-
-import com.sun.jdi.Method;
-import com.sun.jdi.VMDisconnectedException;
-import com.sun.jdi.event.MethodEntryEvent;
-import com.sun.jdi.event.Event;
-import com.sun.jdi.event.EventQueue;
-import com.sun.jdi.event.EventSet;
-import com.sun.jdi.event.VMDeathEvent;
-import com.sun.jdi.event.VMDisconnectEvent;
+import com.sun.jdi.request.*;
+import com.sun.jdi.*;
+import com.sun.jdi.event.*;
 
 public class JDIEventMonitor extends Thread {
 
-	private final String[] excludes = { "java.*", "javax.*", "sun.*", "com.sun.*" };
-	private final VirtualMachine vm ; // the JVM
+	private final String[] excludes = { "java.*", "javax.*", "sun.*", "com.sun.*","org.jboss.*","org.wildfly.*" };
+	private final VirtualMachine vm;
 
 	public JDIEventMonitor(VirtualMachine vm) {
 		this.vm = vm;
 	}
-	
+
 	private void setEventRequests() {
 		EventRequestManager mgr = vm.eventRequestManager();
 		MethodEntryRequest menr = mgr.createMethodEntryRequest();
-		for (int i = 0; i < excludes.length; ++i) { // report method entries
+		for (int i = 0; i < excludes.length; ++i) {
 			menr.addClassExclusionFilter(excludes[i]);
 		}
 		menr.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
 		menr.enable();
+	}
 
-	} //
-
-	private boolean connected = true; // connected to VM?
+	private boolean connected = true; 
 
 	public void run() {
 		setEventRequests();
@@ -41,18 +30,30 @@ public class JDIEventMonitor extends Thread {
 			try {
 				EventSet eventSet = queue.remove();
 				for (Event event : eventSet) {
-					handleEvent(event);
+					if (event instanceof MethodEntryEvent) {
+						methodEntryEvent((MethodEntryEvent) event);
+					}
 				}
 				eventSet.resume();
 			} catch (InterruptedException e) {
 				e.printStackTrace();
-			} // Ignore
-			catch (VMDisconnectedException discExc) {
+			} catch (VMDisconnectedException discExc) {
 				handleDisconnectedException();
 				break;
 			}
 		}
-	} // end of run()
+	}
+	
+	private void methodEntryEvent(MethodEntryEvent event) {
+		Method meth = event.method();
+		String threadName = event.thread().name();
+		String className = meth.declaringType().name();
+		if (meth.isConstructor()) {
+			System.out.println(threadName + "entered " + className + " constructor");
+		}else {
+			System.out.println(threadName + "entered " + className + "." + meth.name() + "()" + " " + meth.location().lineNumber());
+		}
+	}
 
 	private synchronized void handleDisconnectedException() {
 		EventQueue queue = vm.eventQueue();
@@ -68,46 +69,19 @@ public class JDIEventMonitor extends Thread {
 				eventSet.resume();
 			} catch (InterruptedException e) {
 				e.printStackTrace();
-			} // ignore
+			}
 		}
-	} // end of handleDisconnectedException()
+	}
 
-	private boolean vmDied; // has VM death occurred?
-
-	private void vmDeathEvent(VMDeathEvent event)
-	// Notification of VM termination
-	{
+	private boolean vmDied;
+	private void vmDeathEvent(VMDeathEvent event) {
 		vmDied = true;
 		System.out.println("-- The application has exited --");
 	}
 
-	private void vmDisconnectEvent(VMDisconnectEvent event)
-	/*
-	 * Notification of VM disconnection, either through normal termination or
-	 * because of an exception/error.
-	 */
-	{
+	private void vmDisconnectEvent(VMDisconnectEvent event) {
 		connected = false;
 		if (!vmDied)
 			System.out.println("- The application has been disconnected -");
-	}
-
-	private void handleEvent(Event event) {
-		// method events
-		if (event instanceof MethodEntryEvent)
-			methodEntryEvent((MethodEntryEvent) event);
-	}
-
-
-	private void methodEntryEvent(MethodEntryEvent event)
-	// entered a method but no code executed yet
-	{
-		Method meth = event.method();
-		String className = meth.declaringType().name();
-		System.out.println();
-		if (meth.isConstructor())
-			System.out.println("entered " + className + " constructor");
-		else
-			System.out.println("entered " + className + "." + meth.name() + "()");
 	}
 }
